@@ -1,17 +1,4 @@
 /*********************************************************************************************************
-*
-* Update Google Sheet menu allowing script to be run from the spreadsheet.
-*
-*********************************************************************************************************/
-
-function onOpen() {
-  SpreadsheetApp.getUi().createMenu('Functions')
-    .addItem('Update Fidelity Sheets', 'makeFidelityAPIRequest')
-    .addItem('Update Mint Sheet', 'cloneMohitoSheet')
-    .addToUi();
-}
-
-/*********************************************************************************************************
  * 
  * Update sheet from Fidelity Full View transactions. 
  * 
@@ -133,6 +120,19 @@ function buildSheetFromAPIRequest(url, options, sheetName) {
     console.log(response.getResponseCode());
     console.log(response);
   }
+}
+
+/*********************************************************************************************************
+*
+* Update Google Sheet menu allowing script to be run from the spreadsheet.
+*
+*********************************************************************************************************/
+
+function onOpen() {
+  SpreadsheetApp.getUi().createMenu('Functions')
+    .addItem('Update Fidelity Sheets', 'makeFidelityAPIRequest')
+    .addItem('Update Mint Sheet', 'cloneMohitoSheet')
+    .addToUi();
 }
 
 /******************************************************************************************************
