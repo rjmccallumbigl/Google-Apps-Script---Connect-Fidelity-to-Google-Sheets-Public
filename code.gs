@@ -57,8 +57,8 @@ function makeFidelityAPIRequest() {
   var categoriesUrl = "https://api.emoneyadvisor.com/snb-api/api/values/GetCategories";
 
   // These will probably change every time you login, please update following the directions above when they expire (Response Code 401)
-  var apikey = "<<INSERT-HERE>>"
-  var token = "<<INSERT-HERE>>"
+  var apikey = "<<INSERT-HERE>>";
+  var token = "<<INSERT-HERE>>";
 
   // Build options for API request
   var options = {
@@ -89,6 +89,9 @@ function makeFidelityAPIRequest() {
   // Send requests
   buildSheetFromAPIRequest(transactionUrl + queryParams, options, "Fidelity Transactions");
   buildSheetFromAPIRequest(categoriesUrl, options, "Fidelity Categories")
+    
+  // Update categories
+  replaceCategoryIDWithName();
 }
 
 /*********************************************************************************************************
@@ -131,6 +134,7 @@ function buildSheetFromAPIRequest(url, options, sheetName) {
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('Functions')
     .addItem('Update Fidelity Sheets', 'makeFidelityAPIRequest')
+    .addItem('Update Mint Sheet', 'cloneMohitoSheet')
     .addToUi();
 }
 
@@ -177,5 +181,123 @@ function setArraySheet(array, sheetName) {
   if (!sheet.getFilter()) {
     sheetRange.createFilter();
   }
+  SpreadsheetApp.flush();
   sheet.autoResizeColumns(sheetRange.getColumn(), sheetRange.getLastColumn());
+}
+
+/*********************************************************************************************************
+ * 
+ * Replace the categoryId in the transaction sheet by the category name for easier parsing.
+ *  
+ *********************************************************************************************************/
+
+function replaceCategoryIDWithName() {
+
+  //  Declare variables
+  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  var transactionSheet = spreadsheet.getSheetByName("Fidelity Transactions");
+  var transactionSheetHeaderRange = transactionSheet.getRange(1, 1, 1, transactionSheet.getLastColumn());
+  var transactionSheetHeaderRangeValues = transactionSheetHeaderRange.getDisplayValues();
+  var categoryIdHeader = transactionSheetHeaderRangeValues[0].indexOf("categoryId");
+  var flatCategoriesRange = transactionSheet.getRange(1, categoryIdHeader + 1, transactionSheet.getLastRow(), 1);
+  var flatCategoriesArray = flatCategoriesRange.getDisplayValues().join().split(",");
+  var categorySheet = spreadsheet.getSheetByName("Fidelity Categories");
+  var categorySheetRange = categorySheet.getDataRange();
+  var categorySheetRangeValues = categorySheetRange.getDisplayValues();
+  var categoryJSON = getJsonArrayFromSheet(categorySheetRangeValues);
+  var matchingCategory = {};
+  var matchingCategoryString = "";
+  var updatedArray = [["categoryId"]];
+
+  // Parse through category IDs on Fidelity Transactions sheet
+  for (var x = 0; x < flatCategoriesArray.length; x++) {
+    matchingCategory = {};
+    matchingCategoryString = "";
+
+    // if ID detected, replace with category name (+ parent category if found)
+    if (flatCategoriesArray[x] != "categoryId") {
+      if (flatCategoriesArray[x]) {
+        matchingCategory = findCategory(flatCategoriesArray[x], categoryJSON);
+        matchingCategoryString = matchingCategory.name;
+
+        // Prepend with Parent category if there is one
+        if (matchingCategory.parentId) {
+          matchingCategoryString = findCategory(matchingCategory.parentId, categoryJSON).name + " | " + matchingCategoryString;
+        }
+
+        // Update replacement array with Category name
+        updatedArray.push([matchingCategoryString]);
+      } else {
+        updatedArray.push([""]);
+      }
+    }
+  }
+
+  // Update Fidelity Transactions sheet
+  flatCategoriesRange.setValues(updatedArray);
+}
+
+/****************************************************************************************************************************************
+*
+* Find the category by the ID.
+*
+* @param {Number} categoryID Category ID we need to match.
+* @param {Array} categoryJSON The array of category objects with names and associated IDs.
+* @return {Object} Return the matching categories.
+*
+* Sources
+* https://usefulangle.com/post/3/javascript-search-array-of-objects
+*
+****************************************************************************************************************************************/
+
+function findCategory(categoryID, categoryJSON) {
+
+  // Search the object array for matching category IDs
+  var category = categoryJSON.find(function (categoryJSONObject, index) {
+    if (categoryJSONObject.id == categoryID)
+      return true;
+  });
+
+  // Return the matching category object
+  return category;
+}
+
+/*********************************************************************************************************
+ * 
+ * Convert Google Sheet data as a 2D array to an array full of JSON objects.
+ * 
+ * @param {Array} data The 2D array we are converting.
+ * @return {Array} The JSON objects resulting from the conversion stored in an array.
+ * 
+ * Source
+ * https://stackoverflow.com/a/47555577/7954017
+ *  
+ *********************************************************************************************************/
+
+function getJsonArrayFromSheet(data) {
+
+  var obj = {};
+  var result = [];
+  var headers = data[0];
+  var cols = headers.length;
+  var row = [];
+
+  for (var i = 1; i < data.length; i++) {
+
+    // Get a row to fill the object
+    row = data[i];
+
+    // Clear object
+    obj = {};
+
+    // Fill object with new values
+    for (var col = 0; col < cols; col++) {
+      obj[headers[col]] = row[col];
+    }
+
+    // Add object in a final result
+    result.push(obj);
+  }
+
+  return result;
 }
