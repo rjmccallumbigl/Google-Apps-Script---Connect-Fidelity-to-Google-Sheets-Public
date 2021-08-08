@@ -131,7 +131,6 @@ function buildSheetFromAPIRequest(url, options, sheetName) {
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('Functions')
     .addItem('Update Fidelity Sheets', 'makeFidelityAPIRequest')
-    .addItem('Update Mint Sheet', 'cloneMohitoSheet')
     .addToUi();
 }
 
