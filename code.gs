@@ -1,6 +1,8 @@
-/*********************************************************************************************************
+/****************************************************************************************************************************************
  * 
  * Update sheet from Fidelity Full View transactions. 
+ *
+ * @param {String} token The Bearer token grabbed from loading Fidelity Full View.
  * 
  * Background
  * I looked at how Mohito worked for Mint http://b3devs.blogspot.com/p/about-mojito.html and tried the following:
@@ -32,33 +34,46 @@
  * Sources
  * http://b3devs.blogspot.com/p/about-mojito.html
  * 
- *********************************************************************************************************/
+ * Version
+ * 0.2.0
+ *
+ ****************************************************************************************************************************************/
 
-function makeFidelityAPIRequest() {
+function makeFidelityAPIRequest(token) {
 
   // Declare variables  
-  var transactionUrl = "https://api.emoneyadvisor.com/snb-api/api/values/GetFilteredTransactions"
-
-  // Examples if you wanted to modify the URL. A malformed URL will probably return Response Code 404
-  // var transactionUrl = "https://api.emoneyadvisor.com/snb-api/api/values/GetFilteredTransactions?from=7%2F6%2F2021&to=8%2F5%2F2021&dateRangeType=Last+30+days";
-  // var transactionUrl = "https://api.emoneyadvisor.com/snb-api/api/values/GetFilteredTransactions?accountIds[]=12345678&accountIds[]=10101010&descriptionSearchTerm=PIZZA&from=1%2F1%2F2021&to=8%2F6%2F2021";
-  // var transactionUrl = "https://api.emoneyadvisor.com/snb-api/api/values/GetFilteredTransactions?descriptionSearchTerm=&from=1%2F1%2F2021&to=8%2F6%2F2021";
-
-  // or using queryParams instead
   var startDate = encodeURIComponent("1/1/2019");
   var today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'M/d/yyyy');
   var endDate = encodeURIComponent(today);
+  var startOfMonth = ((new Date()).getMonth() + 1).toString() + "/1/" + ((new Date()).getFullYear()).toString();
   var queryParams = "?from=" + startDate + "&to=" + endDate;
+  var apiResponse = 0;
+
+  // API URLs to grab
+  var baseURL = "https://api.emoneyadvisor.com/snb-api/api";
+  var transactionUrl = baseURL + "/values/GetFilteredTransactions";
+  var categoriesURL = baseURL + "/values/GetCategories";
+  var accountsURL = baseURL + "/values/GetAccounts?shouldExcludeHiddenAccounts=False";
+  var transactionRulesURL = baseURL + "/values/GetBankTransactionRules";
+  // var budgetsURL = baseURL + "/budgets/GetBudgets?dateRangeType=Last+30+days&startDate=7%2F9%2F2021&endDate=8%2F8%2F2021";
+  var budgetsURL = baseURL + "/budgets/GetBudgets?dateRangeType=Last+30+days&startDate=" + startDate + "&endDate=" + endDate;
+  // var otherExpensesURL = baseURL + "/values/GetOtherExpenses?fromDate=2021-08-01T04:00:00.000Z&toDate=2021-08-08T15:27:04.959Z";
+  var otherExpensesURL = baseURL + "/values/GetOtherExpenses?fromDate=" + startDate + "&toDate=" + endDate;
+  var overallBudgetURL = baseURL + "/budgets/GetOverallBudget";
+
+  // Examples if you wanted to modify the URL. A malformed URL will probably return Response Code 404
+  // var transactionUrl = baseURL + "/values/GetFilteredTransactions?from=7%2F6%2F2021&to=8%2F5%2F2021&dateRangeType=Last+30+days";
+  // var transactionUrl = baseURL + "/values/GetFilteredTransactions?accountIds[]=12345678&accountIds[]=10101010&descriptionSearchTerm=PIZZA&from=1%2F1%2F2021&to=8%2F6%2F2021";
+  // var transactionUrl = baseURL + "/values/GetFilteredTransactions?descriptionSearchTerm=&from=1%2F1%2F2021&to=8%2F6%2F2021";
+
+  // or using queryParams instead at the end of the URL
   // var queryParams = "";
   // var queryParams = "?dateRangeType=Last+30+days";
   // var queryParams = "?descriptionSearchTerm=BURGER";
 
-  // API URL to grab Categories
-  var categoriesUrl = "https://api.emoneyadvisor.com/snb-api/api/values/GetCategories";
-
-  // These will probably change every time you login, please update following the directions above when they expire (Response Code 401)
+  // The token will probably change every time you login, please update following the directions above when they expire (Response Code 401)
   var apikey = "<<INSERT-HERE>>";
-  var token = "<<INSERT-HERE>>";
+  var token = token || "<<INSERT-HERE>>";
 
   // Build options for API request
   var options = {
@@ -87,22 +102,53 @@ function makeFidelityAPIRequest() {
   }
 
   // Send requests
-  buildSheetFromAPIRequest(transactionUrl + queryParams, options, "Fidelity Transactions");
-  buildSheetFromAPIRequest(categoriesUrl, options, "Fidelity Categories")
-    
-  // Update categories
+  apiResponse = buildSheetFromAPIRequest(transactionUrl + queryParams, options, "Fidelity Transactions");
+
+  // Test success of API call prior to continuing script
+  if (apiResponse == 401) {
+    console.log("Unsuccessful, follow instructions and retry script after updating var token");
+    var ui = SpreadsheetApp.getUi();
+    var response = ui.prompt('Enter token from Dev Tools -> Network -> Filter for "GetFilteredTransactions"');
+
+    // Process response with entered token
+    if (response.getSelectedButton() == ui.Button.OK) {
+      makeFidelityAPIRequest(response.getResponseText());
+    } else {
+      return;
+    }
+    return;
+  }
+  buildSheetFromAPIRequest(categoriesURL, options, "Fidelity Categories");
+  buildSheetFromAPIRequest(accountsURL, options, "Fidelity Accounts");
+  buildSheetFromAPIRequest(transactionRulesURL, options, "Fidelity Transaction Rules");
+  buildSheetFromAPIRequest(budgetsURL, options, "Fidelity Budgets");
+  buildSheetFromAPIRequest(otherExpensesURL, options, "Fidelity Other Expenses");
+
+  // Update Options for Overall Budget request, which has a couple different/new params
+  options.method = "POST";
+  options.headers["Content-Type"] = "application/json;charset=UTF-8";
+  options.payload = JSON.stringify({ startDate: startOfMonth, endDate: today });
+  options.convertArray = true;
+  buildSheetFromAPIRequest(overallBudgetURL, options, "Fidelity Overall Budget");
+
+  // Update categories in Transactions sheet
   replaceCategoryIDWithName();
+
+  // Format sheets a little by deleting empty columns + rows
+  removeEmptyColumns();
+  removeEmptyRows();
 }
 
-/*********************************************************************************************************
+/****************************************************************************************************************************************
  * 
  * Send off API call and create a Google Sheet out of the results.
  * 
  * @param {String} url The GET URL we are contacting.
  * @param {Object} options The API options we built in our first function.
  * @param {String} sheetName The name of our sheet.
+ * @return {Number} The response code of the API request. 200 is successful, anything else is a fail.
  *  
- *********************************************************************************************************/
+ ****************************************************************************************************************************************/
 
 function buildSheetFromAPIRequest(url, options, sheetName) {
 
@@ -114,6 +160,11 @@ function buildSheetFromAPIRequest(url, options, sheetName) {
     console.log("Successfully grabbed " + sheetName);
     var responseJSON = JSON.parse(response.getContentText());
 
+    // Convert 1D array to 2D if necessary
+    if (options.convertArray) {
+      responseJSON = [responseJSON];
+    }
+
     // Print to Google Sheet
     setArraySheet(responseJSON, sheetName);
     console.log("Using sheet " + sheetName);
@@ -123,32 +174,35 @@ function buildSheetFromAPIRequest(url, options, sheetName) {
     console.log(response.getResponseCode());
     console.log(response);
   }
+
+  // Return the response code
+  return response.getResponseCode();
 }
 
-/*********************************************************************************************************
+/****************************************************************************************************************************************
 *
 * Update Google Sheet menu allowing script to be run from the spreadsheet.
 *
-*********************************************************************************************************/
+****************************************************************************************************************************************/
 
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('Functions')
     .addItem('Update Fidelity Sheets', 'makeFidelityAPIRequest')
-    .addItem('Update Mint Sheet', 'cloneMohitoSheet')
     .addToUi();
 }
 
-/******************************************************************************************************
+/****************************************************************************************************************************************
+ * 
  * Convert array into sheet
  * 
  * @param {Array} array The array that we need to map to a sheet
  * @param {String} sheetName The name of the sheet the array is being mapped to
  * 
- ******************************************************************************************************/
+ ****************************************************************************************************************************************/
 
 function setArraySheet(array, sheetName) {
 
-  //  Declare variables
+  // Declare variables
   var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
   var keyArray = [];
   var memberArray = [];
@@ -178,6 +232,12 @@ function setArraySheet(array, sheetName) {
 
   // Pretty up sheet
   sheet.setFrozenRows(1);
+  try {
+    sheet.setFrozenColumns(3);
+  } catch (e) {
+    sheet.setFrozenColumns(1);
+  }
+
   if (!sheet.getFilter()) {
     sheetRange.createFilter();
   }
@@ -185,11 +245,11 @@ function setArraySheet(array, sheetName) {
   sheet.autoResizeColumns(sheetRange.getColumn(), sheetRange.getLastColumn());
 }
 
-/*********************************************************************************************************
+/****************************************************************************************************************************************
  * 
  * Replace the categoryId in the transaction sheet by the category name for easier parsing.
  *  
- *********************************************************************************************************/
+ ****************************************************************************************************************************************/
 
 function replaceCategoryIDWithName() {
 
@@ -262,7 +322,7 @@ function findCategory(categoryID, categoryJSON) {
   return category;
 }
 
-/*********************************************************************************************************
+/****************************************************************************************************************************************
  * 
  * Convert Google Sheet data as a 2D array to an array full of JSON objects.
  * 
@@ -272,7 +332,7 @@ function findCategory(categoryID, categoryJSON) {
  * Source
  * https://stackoverflow.com/a/47555577/7954017
  *  
- *********************************************************************************************************/
+ ****************************************************************************************************************************************/
 
 function getJsonArrayFromSheet(data) {
 
@@ -300,4 +360,50 @@ function getJsonArrayFromSheet(data) {
   }
 
   return result;
+}
+
+/****************************************************************************************************************************************
+ * 
+ * Delete empty columns
+ * 
+ /****************************************************************************************************************************************/
+
+function removeEmptyColumns() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var allsheets = ss.getSheets();
+  for (var s in allsheets) {
+    var sheet = allsheets[s];
+    var maxColumns = sheet.getMaxColumns();
+    var lastColumn = sheet.getLastColumn();
+    if (maxColumns - lastColumn != 0) {
+      try {
+        sheet.deleteColumns(lastColumn + 1, maxColumns - lastColumn);
+      } catch (e) {
+        console.log(sheet.getName() + ": " + e);
+      }
+    }
+  }
+}
+
+/****************************************************************************************************************************************
+ * 
+ * Delete empty rows
+ * 
+ /****************************************************************************************************************************************/
+
+function removeEmptyRows() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var allsheets = ss.getSheets();
+  for (var s in allsheets) {
+    var sheet = allsheets[s];
+    var maxRows = sheet.getMaxRows();
+    var lastRow = sheet.getLastRow();
+    if (maxRows - lastRow > 1) {
+      try {
+        sheet.deleteRows(lastRow + 1, maxRows - lastRow);
+      } catch (e) {
+        console.log(sheet.getName() + ": " + e);
+      }
+    }
+  }
 }
