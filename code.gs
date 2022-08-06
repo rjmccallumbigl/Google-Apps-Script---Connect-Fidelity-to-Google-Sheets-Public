@@ -35,19 +35,23 @@
  * http://b3devs.blogspot.com/p/about-mojito.html
  * 
  * Version
- * 0.2.0
+ * 0.4.1
  *
  ****************************************************************************************************************************************/
 
 function makeFidelityAPIRequest(token) {
 
   // Declare variables  
+  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
   var startDate = encodeURIComponent("1/1/2019");
   var today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'M/d/yyyy');
   var endDate = encodeURIComponent(today);
   var startOfMonth = ((new Date()).getMonth() + 1).toString() + "/1/" + ((new Date()).getFullYear()).toString();
   var queryParams = "?from=" + startDate + "&to=" + endDate;
   var apiResponse = 0;
+
+  // Backup sheet before proceeding
+  cloneGoogleSheet(spreadsheet);
 
   // API URLs to grab
   var baseURL = "https://api.emoneyadvisor.com/snb-api/api";
@@ -99,44 +103,49 @@ function makeFidelityAPIRequest(token) {
     "muteHttpExceptions": true,
     "followRedirects": true,
     "validateHttpsCertificates": true,
-  }
+  };
 
   // Send requests
-  apiResponse = buildSheetFromAPIRequest(transactionUrl + queryParams, options, "Fidelity Transactions");
+  apiResponse = buildSheetFromAPIRequest(transactionUrl + queryParams, options, "Fidelity Transactions", spreadsheet);
 
   // Test success of API call prior to continuing script
   if (apiResponse == 401) {
     console.log("Unsuccessful, follow instructions and retry script after updating var token");
-    var ui = SpreadsheetApp.getUi();
-    var response = ui.prompt('Enter token from Dev Tools -> Network -> Filter for "GetFilteredTransactions"');
+    //   var ui = SpreadsheetApp.getUi();
+    //   var response = ui.prompt('Enter token from Dev Tools -> Network -> Filter for "GetFilteredTransactions"');
 
-    // Process response with entered token
-    if (response.getSelectedButton() == ui.Button.OK) {
-      makeFidelityAPIRequest(response.getResponseText());
-    } else {
-      return;
-    }
+    //   // Process response with entered token
+    //   if (response.getSelectedButton() == ui.Button.OK) {
+    //     makeFidelityAPIRequest(response.getResponseText());
+    //   } else {
+    //     return;
+    //   }
+
+    var htmlSource = HtmlService.createHtmlOutput(buildHTMLDialog());
+    SpreadsheetApp.getUi().showModalDialog(htmlSource, "Authenticate");
     return;
   }
-  buildSheetFromAPIRequest(categoriesURL, options, "Fidelity Categories");
-  buildSheetFromAPIRequest(accountsURL, options, "Fidelity Accounts");
-  buildSheetFromAPIRequest(transactionRulesURL, options, "Fidelity Transaction Rules");
-  buildSheetFromAPIRequest(budgetsURL, options, "Fidelity Budgets");
-  buildSheetFromAPIRequest(otherExpensesURL, options, "Fidelity Other Expenses");
+
+  // Update Fidelity sheets after authenticating
+  buildSheetFromAPIRequest(categoriesURL, options, "Fidelity Categories", spreadsheet);
+  buildSheetFromAPIRequest(accountsURL, options, "Fidelity Accounts", spreadsheet);
+  buildSheetFromAPIRequest(transactionRulesURL, options, "Fidelity Transaction Rules", spreadsheet);
+  buildSheetFromAPIRequest(budgetsURL, options, "Fidelity Budgets", spreadsheet);
+  buildSheetFromAPIRequest(otherExpensesURL, options, "Fidelity Other Expenses", spreadsheet);
 
   // Update Options for Overall Budget request, which has a couple different/new params
   options.method = "POST";
   options.headers["Content-Type"] = "application/json;charset=UTF-8";
   options.payload = JSON.stringify({ startDate: startOfMonth, endDate: today });
   options.convertArray = true;
-  buildSheetFromAPIRequest(overallBudgetURL, options, "Fidelity Overall Budget");
+  buildSheetFromAPIRequest(overallBudgetURL, options, "Fidelity Overall Budget", spreadsheet);
 
   // Update categories in Transactions sheet
-  replaceCategoryIDWithName();
+  replaceCategoryIDWithName(spreadsheet);
 
   // Format sheets a little by deleting empty columns + rows
-  removeEmptyColumns();
-  removeEmptyRows();
+  removeEmptyColumns(spreadsheet);
+  removeEmptyRows(spreadsheet);
 }
 
 /****************************************************************************************************************************************
@@ -146,11 +155,12 @@ function makeFidelityAPIRequest(token) {
  * @param {String} url The GET URL we are contacting.
  * @param {Object} options The API options we built in our first function.
  * @param {String} sheetName The name of our sheet.
+ * @param {Object} spreadsheet The source spreadsheet
  * @return {Number} The response code of the API request. 200 is successful, anything else is a fail.
  *  
  ****************************************************************************************************************************************/
 
-function buildSheetFromAPIRequest(url, options, sheetName) {
+function buildSheetFromAPIRequest(url, options, sheetName, spreadsheet) {
 
   // Send API request
   var response = UrlFetchApp.fetch(url, options);
@@ -166,13 +176,13 @@ function buildSheetFromAPIRequest(url, options, sheetName) {
     }
 
     // Print to Google Sheet
-    setArraySheet(responseJSON, sheetName);
+    setArraySheet(responseJSON, sheetName, spreadsheet);
     console.log("Using sheet " + sheetName);
     console.log(response.getContentText());
   } else {
     console.log("Failure in grabbing " + sheetName);
     console.log(response.getResponseCode());
-    console.log(response);
+    console.log(response.getContentText());
   }
 
   // Return the response code
@@ -197,26 +207,63 @@ function onOpen() {
  * 
  * @param {Array} array The array that we need to map to a sheet
  * @param {String} sheetName The name of the sheet the array is being mapped to
+ * @param {Object} spreadsheet The source spreadsheet
  * 
  ****************************************************************************************************************************************/
 
-function setArraySheet(array, sheetName) {
+function setArraySheet(array, sheetName, spreadsheet) {
 
   // Declare variables
-  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
   var keyArray = [];
   var memberArray = [];
   var sheetRange = "";
 
   // Define an array of all the returned object's keys to act as the Header Row
   keyArray.length = 0;
-  keyArray = Object.keys(array[0]);
+  if (sheetName == "Mortgage") {
+    keyArray = Object.keys(array);
+  } else {
+    keyArray = Object.keys(array[0]);
+  }
   memberArray.length = 0;
   memberArray.push(keyArray);
 
-  //  Capture players from returned data
-  for (var x = 0; x < array.length; x++) {
-    memberArray.push(keyArray.map(function (key) { return array[x][key] }));
+  //  Capture values from returned data
+  if (sheetName == "Mortgage") {
+    memberArray.push(keyArray.map(function (key) {
+      if (key == "date") {
+        return Utilities.formatDate(new Date(array[x][key]), 'America/New_York', 'yyyy-MM-dd H:mm:ss');
+      } else {
+        if (sheetName == "Mortgage") {
+          return array[key];
+        } else {
+          return array[x][key];
+        }
+
+      }
+    }));
+    var transposed = [];
+    memberArray = memberArray[0].map(function (col, c) {
+      // For each column, iterate all rows
+      return memberArray.map(function (row, r) {
+        return memberArray[r][c];
+      });
+    });
+  } else {
+    for (var x = 0; x < array.length; x++) {
+      memberArray.push(keyArray.map(function (key) {
+        if (key == "date") {
+          return Utilities.formatDate(new Date(array[x][key]), 'America/New_York', 'yyyy-MM-dd H:mm:ss');
+        } else {
+          if (sheetName == "Mortgage") {
+            return array[key];
+          } else {
+            return array[x][key];
+          }
+
+        }
+      }));
+    }
   }
 
   // Select or create the sheet
@@ -231,148 +278,166 @@ function setArraySheet(array, sheetName) {
   sheetRange.setValues(memberArray);
 
   // Pretty up sheet
-  sheet.setFrozenRows(1);
-  try {
-    sheet.setFrozenColumns(3);
-  } catch (e) {
-    sheet.setFrozenColumns(1);
-  }
+  if (sheetName == "Mortgage") {
+    // sheet.autoResizeColumns(sheetRange.getColumn(), sheetRange.getLastColumn());
+  } else {
+    sheet.setFrozenRows(1);
+    try {
+      sheet.setFrozenColumns(3);
+    } catch (e) {
+      sheet.setFrozenColumns(1);
+    }
 
-  if (!sheet.getFilter()) {
-    sheetRange.createFilter();
+    if (!sheet.getFilter()) {
+      sheetRange.createFilter();
+    }
+    SpreadsheetApp.flush();
+    sheet.autoResizeColumns(sheetRange.getColumn(), sheetRange.getLastColumn());
   }
-  SpreadsheetApp.flush();
-  sheet.autoResizeColumns(sheetRange.getColumn(), sheetRange.getLastColumn());
 }
 
-/****************************************************************************************************************************************
- * 
- * Replace the categoryId in the transaction sheet by the category name for easier parsing.
- *  
- ****************************************************************************************************************************************/
+  /****************************************************************************************************************************************
+   * 
+   * Replace the categoryId in the transaction sheet by the category name for easier parsing.
+   *  
+   * @param {Object} spreadsheet The source spreadsheet
+   *  
+  
+   ****************************************************************************************************************************************/
 
-function replaceCategoryIDWithName() {
+  function replaceCategoryIDWithName(spreadsheet) {
 
-  //  Declare variables
-  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-  var transactionSheet = spreadsheet.getSheetByName("Fidelity Transactions");
-  var transactionSheetHeaderRange = transactionSheet.getRange(1, 1, 1, transactionSheet.getLastColumn());
-  var transactionSheetHeaderRangeValues = transactionSheetHeaderRange.getDisplayValues();
-  var categoryIdHeader = transactionSheetHeaderRangeValues[0].indexOf("categoryId");
-  var flatCategoriesRange = transactionSheet.getRange(1, categoryIdHeader + 1, transactionSheet.getLastRow(), 1);
-  var flatCategoriesArray = flatCategoriesRange.getDisplayValues().join().split(",");
-  var categorySheet = spreadsheet.getSheetByName("Fidelity Categories");
-  var categorySheetRange = categorySheet.getDataRange();
-  var categorySheetRangeValues = categorySheetRange.getDisplayValues();
-  var categoryJSON = getJsonArrayFromSheet(categorySheetRangeValues);
-  var matchingCategory = {};
-  var matchingCategoryString = "";
-  var updatedArray = [["categoryId"]];
+    //  Declare variables
+    var transactionSheet = spreadsheet.getSheetByName("Fidelity Transactions");
+    var transactionSheetHeaderRange = transactionSheet.getRange(1, 1, 1, transactionSheet.getLastColumn());
+    var transactionSheetHeaderRangeValues = transactionSheetHeaderRange.getDisplayValues();
+    var categoryIdHeader = transactionSheetHeaderRangeValues[0].indexOf("categoryId");
+    var flatCategoriesRange = transactionSheet.getRange(1, categoryIdHeader + 1, transactionSheet.getLastRow(), 1);
+    var flatCategoriesArray = flatCategoriesRange.getDisplayValues().join().split(",");
+    var categorySheet = spreadsheet.getSheetByName("Fidelity Categories");
+    var categorySheetRange = categorySheet.getDataRange();
+    var categorySheetRangeValues = categorySheetRange.getDisplayValues();
+    var categoryJSON = getJsonArrayFromSheet(categorySheetRangeValues);
+    var matchingCategory = {};
+    var matchingCategoryString = "";
+    var updatedArray = [["categoryId"]];
 
-  // Parse through category IDs on Fidelity Transactions sheet
-  for (var x = 0; x < flatCategoriesArray.length; x++) {
-    matchingCategory = {};
-    matchingCategoryString = "";
+    // Parse through category IDs on Fidelity Transactions sheet
+    for (var x = 0; x < flatCategoriesArray.length; x++) {
+      matchingCategory = {};
+      matchingCategoryString = "";
 
-    // if ID detected, replace with category name (+ parent category if found)
-    if (flatCategoriesArray[x] != "categoryId") {
-      if (flatCategoriesArray[x]) {
-        matchingCategory = findCategory(flatCategoriesArray[x], categoryJSON);
-        matchingCategoryString = matchingCategory.name;
+      // if ID detected, replace with category name (+ parent category if found)
+      if (flatCategoriesArray[x] != "categoryId") {
+        if (flatCategoriesArray[x]) {
+          matchingCategory = findCategory(flatCategoriesArray[x], categoryJSON);
+          matchingCategoryString = matchingCategory.name;
 
-        // Prepend with Parent category if there is one
-        if (matchingCategory.parentId) {
-          matchingCategoryString = findCategory(matchingCategory.parentId, categoryJSON).name + " | " + matchingCategoryString;
+          // Prepend with Parent category if there is one
+          if (matchingCategory.parentId) {
+            matchingCategoryString = findCategory(matchingCategory.parentId, categoryJSON).name + " | " + matchingCategoryString;
+          }
+
+          // Update replacement array with Category name
+          updatedArray.push([matchingCategoryString]);
+        } else {
+          updatedArray.push([""]);
         }
-
-        // Update replacement array with Category name
-        updatedArray.push([matchingCategoryString]);
-      } else {
-        updatedArray.push([""]);
       }
     }
+
+    // Update Fidelity Transactions sheet
+    flatCategoriesRange.setValues(updatedArray);
   }
 
-  // Update Fidelity Transactions sheet
-  flatCategoriesRange.setValues(updatedArray);
-}
+  /****************************************************************************************************************************************
+  *
+  * Find the category by the ID.
+  *
+  * @param {Number} categoryID Category ID we need to match.
+  * @param {Array} categoryJSON The array of category objects with names and associated IDs.
+  * @return {Object} Return the matching categories.
+  *
+  * Sources
+  * https://usefulangle.com/post/3/javascript-search-array-of-objects
+  *
+  ****************************************************************************************************************************************/
 
-/****************************************************************************************************************************************
-*
-* Find the category by the ID.
-*
-* @param {Number} categoryID Category ID we need to match.
-* @param {Array} categoryJSON The array of category objects with names and associated IDs.
-* @return {Object} Return the matching categories.
-*
-* Sources
-* https://usefulangle.com/post/3/javascript-search-array-of-objects
-*
-****************************************************************************************************************************************/
+  function findCategory(categoryID, categoryJSON) {
 
-function findCategory(categoryID, categoryJSON) {
+    // Search the object array for matching category IDs
+    var category = categoryJSON.find(function (categoryJSONObject, index) {
+      if (categoryJSONObject.id == categoryID)
+        return true;
+    });
 
-  // Search the object array for matching category IDs
-  var category = categoryJSON.find(function (categoryJSONObject, index) {
-    if (categoryJSONObject.id == categoryID)
-      return true;
-  });
+    // Return the matching category object
+    return category;
+  }
 
-  // Return the matching category object
-  return category;
-}
+  /****************************************************************************************************************************************
+   * 
+   * Convert Google Sheet data as a 2D array to an array full of JSON objects.
+   * 
+   * @param {Array} data The 2D array we are converting.
+   * @return {Array} The JSON objects resulting from the conversion stored in an array.
+   * 
+   * Source
+   * https://stackoverflow.com/a/47555577/7954017
+   *  
+   ****************************************************************************************************************************************/
 
-/****************************************************************************************************************************************
- * 
- * Convert Google Sheet data as a 2D array to an array full of JSON objects.
- * 
- * @param {Array} data The 2D array we are converting.
- * @return {Array} The JSON objects resulting from the conversion stored in an array.
- * 
- * Source
- * https://stackoverflow.com/a/47555577/7954017
- *  
- ****************************************************************************************************************************************/
+  function getJsonArrayFromSheet(data) {
 
-function getJsonArrayFromSheet(data) {
+    // Declare variables
+    var obj = {};
+    var result = [];
+    var row = [];
+    var headers = data[0];
 
-  var obj = {};
-  var result = [];
-  var headers = data[0];
-  var cols = headers.length;
-  var row = [];
+    for (var i = 1; i < data.length; i++) {
 
-  for (var i = 1; i < data.length; i++) {
+      // Get a row to fill the object
+      row = data[i];
 
-    // Get a row to fill the object
-    row = data[i];
+      // Clear object
+      obj = {};
 
-    // Clear object
-    obj = {};
+      // Fill object with new values
+      for (var col = 0; col < headers.length; col++) {
+        obj[headers[col]] = row[col];
+      }
 
-    // Fill object with new values
-    for (var col = 0; col < cols; col++) {
-      obj[headers[col]] = row[col];
+      // Add object in a final result
+      result.push(obj);
     }
 
-    // Add object in a final result
-    result.push(obj);
+    return result;
   }
 
-  return result;
-}
+  /****************************************************************************************************************************************
+   * 
+   * Delete empty columns
+   * 
+   * @param {Object} spreadsheet The source spreadsheet or sheet
+   * 
+   /****************************************************************************************************************************************/
 
-/****************************************************************************************************************************************
- * 
- * Delete empty columns
- * 
- /****************************************************************************************************************************************/
+  function removeEmptyColumns(spreadsheet) {
+    try {
+      // For spreadsheets
+      var allsheets = spreadsheet.getSheets();
+      for (var s in allsheets) {
+        removeEmptyColumnsInSheet(allsheets[s]);
+      }
+    } catch (e) {
+      // For sheets
+      var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(spreadsheet.getName());
+      removeEmptyColumnsInSheet(sheet);
+    }
+  }
 
-function removeEmptyColumns() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var allsheets = ss.getSheets();
-  for (var s in allsheets) {
-    var sheet = allsheets[s];
+  function removeEmptyColumnsInSheet(sheet) {
     var maxColumns = sheet.getMaxColumns();
     var lastColumn = sheet.getLastColumn();
     if (maxColumns - lastColumn != 0) {
@@ -383,19 +448,30 @@ function removeEmptyColumns() {
       }
     }
   }
-}
 
-/****************************************************************************************************************************************
- * 
- * Delete empty rows
- * 
- /****************************************************************************************************************************************/
+  /****************************************************************************************************************************************
+   * 
+   * Delete empty rows
+   * 
+   * @param {Object} spreadsheet The source spreadsheet or sheet
+   *
+   /****************************************************************************************************************************************/
 
-function removeEmptyRows() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var allsheets = ss.getSheets();
-  for (var s in allsheets) {
-    var sheet = allsheets[s];
+   function removeEmptyRows(spreadsheet) {
+    try {
+      // For spreadsheets
+      var allsheets = spreadsheet.getSheets();
+      for (var s in allsheets) {
+        removeEmptyRowsInSheet(allsheets[s]);
+      }
+    } catch (e) {
+      // For sheets
+      var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(spreadsheet.getName());
+      removeEmptyRowsInSheet(sheet);
+    }
+  }
+
+function removeEmptyRowsInSheet(sheet) {
     var maxRows = sheet.getMaxRows();
     var lastRow = sheet.getLastRow();
     if (maxRows - lastRow > 1) {
@@ -406,4 +482,4 @@ function removeEmptyRows() {
       }
     }
   }
-}
+  
